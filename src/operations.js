@@ -17,13 +17,21 @@ export class Operations {
     requireQbit(this.config);
     const torrent = await this.mam.torrent(sourceId);
     await this.qbit.addTorrent(torrent.buffer, torrent.filename);
-    const record = { source: 'mam', sourceId: String(sourceId), title: clean(metadata.title), author: clean(metadata.author), format: clean(metadata.format), size: clean(metadata.size), seeders: Number(metadata.seeders) || 0, date: new Date().toISOString(), status: 'accepted' };
-    await this.state.add('history', record);
+    const record = { source: 'mam', sourceId: String(sourceId), title: normalizeMetadataValue(metadata.title), author: normalizeMetadataValue(metadata.author), format: normalizeMetadataValue(metadata.format), size: normalizeMetadataValue(metadata.size), seeders: Number(metadata.seeders) || 0, date: new Date().toISOString(), status: 'accepted' };
+    await this.state.addHistory(record);
     return { accepted: true, source: 'mam', sourceId: String(sourceId) };
   }
   history() { return this.state.list('history'); }
   list(kind) { return this.state.list(kind); }
-  add(kind, entry) { if (!entry || typeof entry !== 'string' || entry.length > 1000) throw new AppError('ARGS', 'A list entry up to 1000 characters is required'); return this.state.add(kind, entry.trim()); }
-  remove(kind, entry) { if (!entry || typeof entry !== 'string') throw new AppError('ARGS', 'An entry is required'); return this.state.remove(kind, entry); }
+  add(kind, entry) {
+    const normalized = typeof entry === 'string' ? { title: entry } : { ...entry };
+    if (!normalized.title || typeof normalized.title !== 'string' || normalized.title.length > 1000) throw new AppError('ARGS', 'A title up to 1000 characters is required');
+    normalized.date ||= new Date().toISOString().slice(0, 10); return this.state.add(kind, normalized);
+  }
+  remove(kind, selector) {
+    const normalized = typeof selector === 'string' ? { title: selector } : { ...selector };
+    if (!normalized.title && !Number.isInteger(normalized.index)) throw new AppError('ARGS', 'A title or index is required');
+    return this.state.remove(kind, normalized);
+  }
 }
-function clean(value) { return typeof value === 'string' ? value.slice(0, 500) : ''; }
+function normalizeMetadataValue(value) { return typeof value === 'string' ? value.slice(0, 500) : ''; }

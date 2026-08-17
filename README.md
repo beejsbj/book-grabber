@@ -21,7 +21,11 @@ book-grabber queue list --json
 book-grabber queue add "A wanted book" --json
 book-grabber not-found remove "A missing book" --json
 book-grabber serve --host 127.0.0.1 --port 3000
+book-grabber --help
+book-grabber --version
 ```
+
+`serve` also writes one success envelope, after the listener has bound, and otherwise remains running. `--help` and `--version` are the intentional human-readable stdout exceptions; they do not require `--json`.
 
 Exit codes: `2` arguments, `3` configuration, `4` authentication, `5` upstream/network, `6` qBittorrent rejection, `7` state I/O, `8` internal.
 

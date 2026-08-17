@@ -36,7 +36,7 @@ export class QbitClient {
     const response = await this.request('/api/v2/torrents/add', { method: 'POST', body: form });
     if (!response.ok) throw new AppError('QBIT', `qBittorrent rejected torrent (${response.status})`, { retryable: response.status >= 500 });
     const text = (await response.text()).trim();
-    if (text && !/^ok\.?$/i.test(text)) throw new AppError('QBIT', 'qBittorrent rejected torrent');
+    if (text !== 'Ok' && text !== 'Ok.') throw new AppError('QBIT', 'qBittorrent rejected torrent');
     return { accepted: true };
   }
 }
