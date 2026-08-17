@@ -13,7 +13,7 @@ The primary interface is a stable JSON CLI for agents and scripts. The optional 
 
 ## 60-second first search
 
-With Node 20+, Git, and qBittorrent available, replace these placeholders with your own private values. They affect only the current shell:
+With Node 20+, Git, and a qBittorrent instance with its Web UI/Web API enabled, replace these placeholders with your own private values. They affect only the current shell:
 
 ```sh
 export MAM_ID='your-mam-session-id'
@@ -46,22 +46,33 @@ The read-only commands are `health`, `search`, `history`, and the `list` forms o
 
 ## Requirements and configuration
 
-- Node.js 20 or newer and Git.
+- Node.js 20 or newer (including npm) and Git.
 - A valid MAM account/session, supplied as `MAM_ID`.
 - A reachable qBittorrent Web API, supplied as `QBIT_URL`; add `QBIT_USERNAME` and `QBIT_PASSWORD` if its API requires login.
 - A writable `DATA_DIR` for the local history and lists (defaults to `./data`).
 
-Copy the variable names from [`.env.example`](.env.example) into your operating system's service manager, shell environment, or another secret-aware environment manager. The program intentionally does not load `.env` files itself. Do not commit a populated environment file or share session IDs and passwords.
+Copy the variable names from [`.env.example`](.env.example) into your operating system's service manager, shell environment, or another secret-aware environment manager:
 
-`MAM_ID` is sent only as MAM's `mam_id` cookie. `QBIT_URL` must be an explicit HTTP(S) URL without embedded credentials. The local state files retain the legacy names `downloads-history.json`, `books-wanted.md`, `books-not-found.md`, and `books-failed.md`.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `MAM_ID` | For search and grab | MAM session ID, sent only as the `mam_id` cookie |
+| `QBIT_URL` | For health and grab | Base HTTP(S) URL of the qBittorrent Web API |
+| `QBIT_USERNAME`, `QBIT_PASSWORD` | If qBittorrent requires login | Web API credentials |
+| `DATA_DIR` | No | Local state directory; defaults to `./data` |
+| `DL_SAVE_PATH` | No | qBittorrent save path included with new handoffs |
+| `AUTH_USER`, `AUTH_PASS` | Together for a direct non-loopback bind | HTTP Basic credentials for the UI and detailed API routes |
+
+The program intentionally does not load `.env` files itself. Do not commit a populated environment file or share session IDs and passwords. Set `AUTH_USER` and `AUTH_PASS` together; setting only one does not enable authentication on a loopback bind.
+
+`QBIT_URL` must be an explicit HTTP(S) URL without embedded credentials. The local state files retain the legacy names `downloads-history.json`, `books-wanted.md`, `books-not-found.md`, and `books-failed.md`.
 
 ## Why Node and npm?
 
-This is not a claim that Express is universally better than Python. This workload is network-bound, so Node/Express and Python are both sufficient on speed and efficiency. Version 1 keeps Node/Express because the recovered application was Node-based and this lets the CLI, operation core, API, and private UI share one compatibility-focused implementation. It is the lowest-risk reuse choice, not a capability advantage.
+This is not a claim that Express is universally better than Python. This workload is network-bound, so Node/Express and a comparable Python stack are both sufficient on speed and efficiency. Version 1 keeps Node/Express because the recovered application was Node-based and this lets the CLI, operation core, API, and private UI share one compatibility-focused implementation. It is the lowest-risk reuse choice, not a capability advantage.
 
-`curl` is useful to install something or call an HTTP endpoint; it is not the runtime that owns MAM authentication, qBittorrent handoff, state locking, the CLI, and the UI. A Python rewrite is possible, but would be a packaging and compatibility project rather than a new capability. If this were designed from scratch with a single-binary or curl-install priority, Go would be a stronger runtime/packaging candidate.
+`curl` can download an installer or call an HTTP endpoint; it is not the runtime that owns MAM authentication, qBittorrent handoff, state locking, the CLI, and the UI. A Python rewrite is possible, but would be a packaging and compatibility project rather than a new capability. If this were designed from scratch with a single self-contained binary as a firm distribution requirement, Go would be a natural candidate.
 
-This project is not published to the npm registry. `npm install` is used as a package installer for a pinned Git tag, which keeps each deployment reproducible:
+This project is not published to the npm registry. `npm install` is used as a package installer for a pinned Git tag, selecting an explicit release instead of a moving branch:
 
 ```sh
 npm install --global git+https://github.com/beejsbj/book-grabber.git#v1.0.0
@@ -69,7 +80,7 @@ npm install --global git+https://github.com/beejsbj/book-grabber.git#v1.0.0
 
 ## Command reference
 
-All non-server commands require `--json` and write exactly one JSON envelope to stdout.
+All operation commands require `--json` and write exactly one JSON envelope to stdout.
 
 ```sh
 book-grabber health --json
@@ -94,7 +105,7 @@ Exit codes: `2` arguments, `3` configuration, `4` authentication, `5` upstream/n
 
 ## JSON contract for agents
 
-Every non-server CLI command returns one JSON object. A successful command has `{ "schemaVersion": "1", "ok": true, "command": "…", "data": … }`; a failed command has `{ "schemaVersion": "1", "ok": false, "command": "…", "error": { "code": "…", "message": "…", "retryable": false } }`. Parse stdout as JSON and use the process exit status; never infer success from prose or stderr.
+Every operation command returns one JSON object. A successful command has `{ "schemaVersion": "1", "ok": true, "command": "…", "data": … }`; a failed command has `{ "schemaVersion": "1", "ok": false, "command": "…", "error": { "code": "…", "message": "…", "retryable": false } }`. Parse stdout as JSON and use the process exit status; never infer success from prose or stderr.
 
 For example, reading the wanted queue does not contact MAM or qBittorrent:
 
@@ -110,7 +121,7 @@ Start the same process with:
 book-grabber serve --host 127.0.0.1 --port 3000
 ```
 
-The UI and API default to `127.0.0.1:3000`, so they are private to the machine by default. Wildcard binds are refused. A non-loopback bind is allowed only on an address assigned to the host in `100.64.0.0/10` and requires `AUTH_USER` and `AUTH_PASS`; detailed routes then require HTTP Basic authentication. `/api/health` deliberately exposes only `{ok:true,live:true}` for liveness. The authenticated `/api/health?detail=1` response includes MAM configuration and qBittorrent/data-directory diagnostics.
+Open `http://127.0.0.1:3000`. The UI and API are private to the machine by default. Wildcard binds are refused. A non-loopback bind is allowed only on an address assigned to the host in `100.64.0.0/10` and requires `AUTH_USER` and `AUTH_PASS`; detailed routes then require HTTP Basic authentication. `/api/health` deliberately exposes only `{ok:true,live:true}` for liveness. `/api/health?detail=1` passes through the authentication layer and includes MAM configuration and qBittorrent/data-directory diagnostics; on a loopback bind it requires Basic authentication only when both authentication variables are set.
 
 Retained API routes are `/api/health`, `/api/search`, `/api/download`, `/api/status`, `/api/downloads`, `/api/queue`, `/api/not-found`, and `/api/failed`. Keep the service on loopback and use [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve) with tailnet ACLs/grants for private remote browser access. Do not expose it through Tailscale Funnel.
 

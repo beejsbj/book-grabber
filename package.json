@@ -7,7 +7,7 @@
   "type": "module",
   "main": "src/operations.js",
   "bin": { "book-grabber": "bin/book-grabber.js" },
-  "files": ["bin/", "src/", "public/", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "PROVENANCE.md"],
+  "files": ["bin/", "src/", "public/", ".env.example", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "PROVENANCE.md"],
   "engines": { "node": ">=20" },
   "scripts": { "test": "node --test", "start": "node bin/book-grabber.js serve" },
   "keywords": ["books", "mam", "qbittorrent"],
