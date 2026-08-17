@@ -11,15 +11,16 @@ export class Operations {
     this.qbit = new QbitClient(config, fetchImpl);
     this.state = new StateStore(config.dataDir);
   }
-  async health() { requireQbit(this.config); const qbit = await this.qbit.health(); return { mamConfigured: Boolean(this.config.mamId), qbit, dataDir: this.config.dataDir }; }
+  async health() { requireQbit(this.config); const qbit = await this.qbit.health(); return { ok: true, mamConfigured: Boolean(this.config.mamId), qbitUrl: this.config.qbitUrl, qbitReachable: qbit.reachable, dataDir: this.config.dataDir }; }
   async search(query, page = 0) { const found = await this.mam.search(query, page); return { query, page, total: found.results.length, results: found.results }; }
   async grab(sourceId, metadata = {}) {
     requireQbit(this.config);
     const torrent = await this.mam.torrent(sourceId);
     await this.qbit.addTorrent(torrent.buffer, torrent.filename);
-    const record = { source: 'mam', sourceId: String(sourceId), title: normalizeMetadataValue(metadata.title), author: normalizeMetadataValue(metadata.author), format: normalizeMetadataValue(metadata.format), size: normalizeMetadataValue(metadata.size), seeders: Number(metadata.seeders) || 0, date: new Date().toISOString(), status: 'accepted' };
+    const normalizedSourceId = String(sourceId); const timestamp = new Date().toISOString();
+    const record = { id: normalizedSourceId, source: 'mam', sourceId: normalizedSourceId, title: normalizeMetadataValue(metadata.title), author: normalizeMetadataValue(metadata.author), format: normalizeMetadataValue(metadata.format), size: normalizeMetadataValue(metadata.size), seeders: Number(metadata.seeders) || 0, ts: timestamp, date: timestamp, status: 'added' };
     await this.state.addHistory(record);
-    return { accepted: true, source: 'mam', sourceId: String(sourceId) };
+    return { accepted: true, source: 'mam', sourceId: normalizedSourceId };
   }
   history() { return this.state.list('history'); }
   list(kind) { return this.state.list(kind); }

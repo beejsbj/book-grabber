@@ -31,7 +31,7 @@ Exit codes: `2` arguments, `3` configuration, `4` authentication, `5` upstream/n
 
 ## Web service
 
-The server defaults to `127.0.0.1:3000`. Wildcard binds are refused. A non-loopback bind is allowed only when it is an address assigned to the host in `100.64.0.0/10`, and requires `AUTH_USER` and `AUTH_PASS`; detailed API routes then use HTTP Basic authentication. `/api/health` is a minimal unauthenticated liveness response; add `?detail=1` for the authenticated dependency check.
+The server defaults to `127.0.0.1:3000`. Wildcard binds are refused. A non-loopback bind is allowed only when it is an address assigned to the host in `100.64.0.0/10`, and requires `AUTH_USER` and `AUTH_PASS`; detailed API routes then use HTTP Basic authentication. `/api/health` intentionally exposes only `{ok:true,live:true}` without authentication for liveness. The authenticated `/api/health?detail=1` compatibility response includes `mamConfigured`, `qbitUrl`, `qbitReachable`, and `dataDir`.
 
 The retained API routes are `/api/health`, `/api/search`, `/api/download`, `/api/status`, `/api/downloads`, `/api/queue`, `/api/not-found`, and `/api/failed`.
 

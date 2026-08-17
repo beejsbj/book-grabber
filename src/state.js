@@ -52,7 +52,7 @@ export class StateStore {
     catch (cause) { throw new AppError('STATE', 'Unable to write state', { cause }); }
   }
   async addHistory(record) {
-    return this.withLock(async () => { const records = await this.readJson(); records.push(record); await this.atomicWrite(this.file('history'), `${JSON.stringify(records, null, 2)}\n`); return record; });
+    return this.withLock(async () => { const records = await this.readJson(); records.unshift(record); await this.atomicWrite(this.file('history'), `${JSON.stringify(records, null, 2)}\n`); return record; });
   }
   async add(kind, entry) {
     return this.withLock(async () => {

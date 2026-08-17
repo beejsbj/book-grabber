@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { loadConfig, validateBind } from '../src/config.js';
 import { AppError } from '../src/errors.js';
@@ -52,6 +54,23 @@ test('state serializes concurrent mutations, recovers a dead lock, and writes hi
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'book-grabber-state-')); const state = new StateStore(dir);
   await Promise.all(Array.from({ length: 12 }, (_, index) => state.add('queue', { title: `item ${index}` }))); assert.equal((await state.list('queue')).length, 12); await state.addHistory({ sourceId: '1' }); assert.deepEqual(await state.list('history'), [{ sourceId: '1' }]); await fs.writeFile(path.join(dir, '.book-grabber.lock'), '99999999'); await state.add('queue', { title: 'after stale lock' }); assert.equal((await state.list('queue')).at(-1).text, 'after stale lock');
 });
+test('state lock serializes two real Node processes', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'book-grabber-process-lock-')); const workerPath = fileURLToPath(new URL('../test-support/state-worker.js', import.meta.url));
+  const runWorker = (name) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [workerPath, dir, name, '20'], { stdio: 'ignore' });
+    const timeout = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`state worker ${name} timed out`)); }, 10_000);
+    child.once('error', (error) => { clearTimeout(timeout); reject(error); }); child.once('exit', (code) => { clearTimeout(timeout); code === 0 ? resolve() : reject(new Error(`state worker ${name} exited ${code}`)); });
+  });
+  await Promise.all([runWorker('first'), runWorker('second')]); const items = await new StateStore(dir).list('queue'); assert.equal(items.length, 40); assert.equal(new Set(items.map((item) => item.text)).size, 40);
+});
+test('grab prepends a legacy-compatible history record with normalized source fields', async () => {
+  const cfg = config(); await fs.mkdir(cfg.dataDir, { recursive: true }); await fs.writeFile(path.join(cfg.dataDir, 'downloads-history.json'), `${JSON.stringify([{ id: 'old', ts: '2026-01-01T00:00:00.000Z', status: 'added' }])}\n`);
+  const operations = new Operations(cfg); operations.mam = { torrent: async () => ({ buffer: Buffer.from('torrent'), filename: 'mam-42.torrent' }) }; operations.qbit = { addTorrent: async () => ({ accepted: true }) };
+  await operations.grab('42', { title: 'Dune', author: 'Frank Herbert', format: 'epub', size: '2 MB', seeders: 9 }); const history = await operations.history(); assert.equal(history.length, 2); assert.equal(history[1].id, 'old'); assert.deepEqual({ id: history[0].id, source: history[0].source, sourceId: history[0].sourceId, title: history[0].title, author: history[0].author, format: history[0].format, size: history[0].size, seeders: history[0].seeders, status: history[0].status }, { id: '42', source: 'mam', sourceId: '42', title: 'Dune', author: 'Frank Herbert', format: 'epub', size: '2 MB', seeders: 9, status: 'added' }); assert.equal(new Date(history[0].ts).toISOString(), history[0].ts);
+});
+test('detailed operations health uses legacy-compatible keys', async () => {
+  const cfg = config(); const operations = new Operations(cfg); operations.qbit = { health: async () => ({ reachable: true }) }; assert.deepEqual(await operations.health(), { ok: true, mamConfigured: true, qbitUrl: 'http://qbit.test', qbitReachable: true, dataDir: cfg.dataDir });
+});
 test('CLI emits one envelope and maps argument errors', async () => {
   const lines = []; const fake = { health: async () => ({ good: true }) }; const code = await runCli(['health', '--json'], { operations: fake, out: (x) => lines.push(x), err: () => {} }); assert.equal(code, 0); assert.deepEqual(JSON.parse(lines[0]), { schemaVersion: '1', ok: true, command: 'health', data: { good: true } });
   const bad = []; const badCode = await runCli(['search', '--json'], { operations: fake, out: (x) => bad.push(x), err: () => {} }); assert.equal(badCode, 2); assert.equal(JSON.parse(bad[0]).error.code, 'ARGS');
@@ -66,9 +85,9 @@ test('serve emits one JSON envelope only after a listener binds and maps bind er
   const argumentOutput = []; const argumentFailure = () => { throw new AppError('ARGS', 'bad port'); }; assert.equal(await runCli(['serve'], { operations: fakeOperations, out: (line) => argumentOutput.push(line), err: () => {}, serveImpl: argumentFailure }), 2); assert.equal(JSON.parse(argumentOutput[0]).error.code, 'ARGS');
 });
 test('web keeps liveness public, protects root, and preserves legacy response shapes', async () => {
-  const cfg = config({ AUTH_USER: 'u', AUTH_PASS: 'p' }); const calls = []; const ops = { health: async () => ({ checked: true }), search: async () => ({ total: 0, results: [] }), history: async () => [{ title: 'Dune' }], list: async (kind) => kind === 'queue' ? [{ text: 'Dune', done: false }] : [], add: async (kind, body) => { calls.push({ kind, body }); return body; }, remove: async (kind, body) => ({ removed: { kind, ...body }, remaining: 0 }) }; const app = createApp(ops, cfg); const server = await new Promise((resolve) => { const listeningServer = app.listen(0, '127.0.0.1', () => resolve(listeningServer)); }); const root = `http://127.0.0.1:${server.address().port}`; const auth = { Authorization: `Basic ${Buffer.from('u:p').toString('base64')}` };
+  const cfg = config({ AUTH_USER: 'u', AUTH_PASS: 'p' }); const detailedHealth = { ok: true, mamConfigured: true, qbitUrl: 'http://qbit.test', qbitReachable: true, dataDir: cfg.dataDir }; const calls = []; const ops = { health: async () => detailedHealth, search: async () => ({ total: 0, results: [] }), history: async () => [{ title: 'Dune' }], list: async (kind) => kind === 'queue' ? [{ text: 'Dune', done: false }] : [], add: async (kind, body) => { calls.push({ kind, body }); return body; }, remove: async (kind, body) => ({ removed: { kind, ...body }, remaining: 0 }) }; const app = createApp(ops, cfg); const server = await new Promise((resolve) => { const listeningServer = app.listen(0, '127.0.0.1', () => resolve(listeningServer)); }); const root = `http://127.0.0.1:${server.address().port}`; const auth = { Authorization: `Basic ${Buffer.from('u:p').toString('base64')}` };
   try {
-    assert.equal((await fetch(`${root}/api/health`)).status, 200); assert.equal((await fetch(`${root}/api/health?detail=1`)).status, 401); assert.equal((await fetch(root)).status, 401); const authorizedRoot = await fetch(root, { headers: auth }); assert.equal(authorizedRoot.status, 200); assert.match(await authorizedRoot.text(), /Book Grabber/);
+    assert.deepEqual(await (await fetch(`${root}/api/health`)).json(), { ok: true, live: true }); assert.equal((await fetch(`${root}/api/health?detail=1`)).status, 401); assert.deepEqual(await (await fetch(`${root}/api/health?detail=1`, { headers: auth })).json(), detailedHealth); assert.equal((await fetch(root)).status, 401); const authorizedRoot = await fetch(root, { headers: auth }); assert.equal(authorizedRoot.status, 200); assert.match(await authorizedRoot.text(), /Book Grabber/);
     assert.deepEqual(await (await fetch(`${root}/api/downloads`, { headers: auth })).json(), { downloads: [{ title: 'Dune' }] }); assert.deepEqual(await (await fetch(`${root}/api/queue`, { headers: auth })).json(), { items: [{ text: 'Dune', done: false }] });
     const queueResponse = await fetch(`${root}/api/queue`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Kindred', notes: 'audio' }) }); assert.equal(queueResponse.status, 200); assert.deepEqual(calls[0], { kind: 'queue', body: { title: 'Kindred', notes: 'audio' } });
     const removed = await fetch(`${root}/api/not-found`, { method: 'DELETE', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0 }) }); assert.equal(removed.status, 200); assert.equal((await removed.json()).remaining, 0);
