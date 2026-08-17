@@ -12,13 +12,22 @@ export class StateStore {
     try { await fs.mkdir(this.dataDir, { recursive: true }); } catch (cause) { throw new AppError('STATE', 'Unable to create state directory', { cause }); }
     let handle;
     for (let attempt = 0; attempt < 80; attempt += 1) {
-      try { handle = await fs.open(this.lockPath, 'wx'); break; }
-      catch (error) { if (error.code !== 'EEXIST') throw new AppError('STATE', 'Unable to acquire state lock', { cause: error }); await delay(25 + Math.floor(Math.random() * 20)); }
+      try { handle = await fs.open(this.lockPath, 'wx'); await handle.writeFile(String(process.pid)); break; }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw new AppError('STATE', 'Unable to acquire state lock', { cause: error });
+        await this.clearDeadLock(); await delay(25 + Math.floor(Math.random() * 20));
+      }
     }
     if (!handle) throw new AppError('STATE', 'State lock is busy', { retryable: true });
     try { return await work(); }
     catch (error) { if (error instanceof AppError) throw error; throw new AppError('STATE', 'State operation failed', { cause: error }); }
     finally { await handle.close().catch(() => {}); await fs.unlink(this.lockPath).catch(() => {}); }
+  }
+  async clearDeadLock() {
+    let pid;
+    try { pid = Number.parseInt((await fs.readFile(this.lockPath, 'utf8')).trim(), 10); } catch { return; }
+    if (!Number.isInteger(pid) || pid <= 1) return;
+    try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') await fs.unlink(this.lockPath).catch(() => {}); }
   }
   async readJson(kind) {
     try { const parsed = JSON.parse(await fs.readFile(this.file(kind), 'utf8')); return Array.isArray(parsed) ? parsed : []; }

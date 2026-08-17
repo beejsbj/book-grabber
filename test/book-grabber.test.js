@@ -31,7 +31,7 @@ test('qBittorrent logs in after 403 and adds a torrent', async () => {
 });
 test('state retains legacy markdown and serializes concurrent writes', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'book-grabber-state-')); const state = new StateStore(dir); await fs.writeFile(path.join(dir, 'books-wanted.md'), '- Existing item\n');
-  await Promise.all(Array.from({ length: 12 }, (_, i) => state.add('queue', `item ${i}`))); const values = await state.list('queue'); assert.equal(values.length, 13); assert.equal(values[0], 'Existing item'); await state.add('history', { sourceId: '1' }); assert.deepEqual(await state.list('history'), [{ sourceId: '1' }]);
+  await Promise.all(Array.from({ length: 12 }, (_, i) => state.add('queue', `item ${i}`))); const values = await state.list('queue'); assert.equal(values.length, 13); assert.equal(values[0], 'Existing item'); await state.add('history', { sourceId: '1' }); assert.deepEqual(await state.list('history'), [{ sourceId: '1' }]); await fs.writeFile(path.join(dir, '.book-grabber.lock'), '99999999'); await state.add('queue', 'after stale lock'); assert.equal((await state.list('queue')).at(-1), 'after stale lock');
 });
 test('CLI emits one envelope and maps argument errors', async () => {
   const lines = []; const fake = { health: async () => ({ good: true }) }; const code = await runCli(['health', '--json'], { operations: fake, out: (x) => lines.push(x), err: () => {} }); assert.equal(code, 0); assert.deepEqual(JSON.parse(lines[0]), { schemaVersion: '1', ok: true, command: 'health', data: { good: true } });
