@@ -6,7 +6,7 @@ import { Operations } from '../src/operations.js';
 import { serve } from '../src/web.js';
 import { AppError, asAppError, exitCodes } from '../src/errors.js';
 
-const version = '1.0.0';
+const version = '1.0.1';
 const help = `book-grabber ${version}
 
 Usage:
