@@ -1,7 +1,8 @@
 {
   "name": "book-grabber",
   "version": "1.0.0",
-  "description": "Private-source book search and qBittorrent handoff service",
+  "description": "MAM-only book search and qBittorrent handoff service",
+  "private": true,
   "license": "MIT",
   "type": "module",
   "main": "src/operations.js",
@@ -11,5 +12,7 @@
   "scripts": { "test": "node --test", "start": "node bin/book-grabber.js serve" },
   "keywords": ["books", "mam", "qbittorrent"],
   "repository": { "type": "git", "url": "git+https://github.com/beejsbj/book-grabber.git" },
+  "bugs": { "url": "https://github.com/beejsbj/book-grabber/issues" },
+  "homepage": "https://github.com/beejsbj/book-grabber#readme",
   "dependencies": { "express": "^4.21.2" }
 }
