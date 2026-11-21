@@ -28,8 +28,10 @@ export class MamSession {
     } catch { /* missing or unreadable: fall back to MAM_ID */ }
     return this.config.mamId;
   }
+  async forget() { await fs.unlink(this.file).catch(() => {}); }
   async remember(response) {
-    const rotated = setCookieValues(response).map((line) => line.match(/^\s*mam_id=([^;\s]+)/)?.[1]).find(Boolean);
+    if (!response?.ok) return false;
+    const rotated = setCookieValues(response).map((line) => line.match(/^\s*mam_id=([^;\s]+)/)?.[1]).find((value) => value && !/^(deleted|null|)$/i.test(value));
     if (!rotated || rotated === await this.current()) return false;
     const temp = `${this.file}.${process.pid}.${Date.now()}.tmp`;
     try {
@@ -89,8 +91,16 @@ export function parseSearch(payload) {
 
 export class MamClient {
   constructor(config, fetchImpl = globalThis.fetch) { this.config = config; this.fetch = fetchImpl; this.session = new MamSession(config); }
-  async request(url, init = {}) {
-    const response = await this.fetch(url, { ...init, headers: { ...init.headers, Cookie: mamCookie(this.config, await this.session.current()), 'User-Agent': ua } });
+  // A rejected saved cookie never sticks: retry once with MAM_ID and drop
+  // the saved one when MAM_ID is accepted.
+  async request(url, init = {}, rejected = (response) => response.status === 401 || response.status === 403) {
+    const send = (mamId) => this.fetch(url, { ...init, headers: { ...init.headers, Cookie: mamCookie(this.config, mamId), 'User-Agent': ua } });
+    const saved = await this.session.current();
+    let response = await send(saved);
+    if (saved !== this.config.mamId && await rejected(response.clone())) {
+      response = await send(this.config.mamId);
+      if (!await rejected(response.clone())) await this.session.forget();
+    }
     await this.session.remember(response);
     return response;
   }
@@ -127,21 +137,27 @@ export class MamClient {
   async keepalive() {
     requireMam(this.config);
     let response;
-    try { response = await this.request(SEEDBOX_API, { headers: { Accept: 'application/json' } }); }
+    try { response = await this.request(SEEDBOX_API, { headers: { Accept: 'application/json' } }, async (r) => sessionRejected(r.status, await r.json().catch(() => ({})))); }
     catch { throw new AppError('UPSTREAM', 'MAM seedbox API network request failed', { retryable: true }); }
     let body = {};
     try { body = await response.json(); } catch { /* non-JSON error page */ }
     const msg = typeof body?.msg === 'string' ? body.msg.slice(0, 200) : '';
     if (body?.Success === true) return { ok: true, changed: !/no change/i.test(msg), message: msg || 'Completed', ip: typeof body.ip === 'string' ? body.ip : null, asn: body.ASN ?? null };
+    if (sessionRejected(response.status, body)) throw new AppError('AUTH', `MAM session rejected: ${msg || response.status}`);
     if (/too recent/i.test(msg) || response.status === 429) return { ok: true, changed: false, message: msg || 'Last change too recent', ip: null, asn: null, rateLimited: true };
-    if (response.status === 401 || response.status === 403 || /session|cookie|not authori[sz]ed|asn/i.test(msg)) throw new AppError('AUTH', `MAM session rejected: ${msg || response.status}`);
     throw new AppError('UPSTREAM', `MAM seedbox API failed: ${msg || response.status}`, { retryable: response.status >= 500 });
   }
 }
 
+const REJECTED = /invalid session|no session|session (has )?expired|incorrect session|not authori[sz]ed|asn mismatch|login/i;
+function sessionRejected(status, body) {
+  if (status === 401 || status === 403) return true;
+  return body?.Success !== true && REJECTED.test(typeof body?.msg === 'string' ? body.msg : '');
+}
+
 async function refusalReason(response) {
   try {
-    const text = (await response.text()).replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const text = (await response.text()).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     return text.slice(0, 200) || 'not acceptable (406)';
   } catch { return 'not acceptable (406)'; }
 }

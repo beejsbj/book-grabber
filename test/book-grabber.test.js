@@ -35,6 +35,23 @@ test('a rotated mam_id is saved privately and used until MAM_ID changes', async 
   const fresh = []; const repasted = new MamClient({ ...cfg, mamId: 'pasted-new' }, async (_url, init) => { fresh.push(init.headers.Cookie); return new Response(JSON.stringify({ data: [] })); });
   await repasted.search('d'); assert.deepEqual(fresh, ['mam_id=pasted-new']);
 });
+test('a rejected saved cookie falls back to MAM_ID once and is dropped', async () => {
+  const cfg = config(); await fs.mkdir(cfg.dataDir, { recursive: true });
+  const seed = (await import('node:crypto')).createHash('sha256').update('session-value').digest('hex').slice(0, 16);
+  await fs.writeFile(path.join(cfg.dataDir, 'mam-session.json'), JSON.stringify({ seed, mamId: 'poisoned' }));
+  const sent = []; const client = new MamClient(cfg, async (_url, init) => { sent.push(init.headers.Cookie); return init.headers.Cookie === 'mam_id=poisoned' ? new Response(JSON.stringify({ Success: false, msg: 'Invalid session' }), { status: 403, headers: rotating('worse') }) : new Response(JSON.stringify({ Success: true, msg: 'No change' })); });
+  assert.equal((await client.keepalive()).ok, true); assert.deepEqual(sent, ['mam_id=poisoned', 'mam_id=session-value']);
+  await assert.rejects(() => fs.stat(path.join(cfg.dataDir, 'mam-session.json')), (error) => error.code === 'ENOENT');
+});
+test('cookies from failed responses and deletion markers are not saved', async () => {
+  const cfg = config(); const client = new MamClient(cfg, async () => new Response('{}', { status: 500, headers: rotating('from-error') }));
+  await assert.rejects(() => client.search('x')); const ok = new MamClient(cfg, async () => new Response(JSON.stringify({ data: [] }), { headers: rotating('deleted') })); await ok.search('y');
+  await assert.rejects(() => fs.stat(path.join(cfg.dataDir, 'mam-session.json')), (error) => error.code === 'ENOENT');
+});
+test('a transient server error mentioning sessions is not reported as a dead session', async () => {
+  const client = new MamClient(config(), async () => new Response(JSON.stringify({ Success: false, msg: 'session store temporarily unavailable' }), { status: 503 }));
+  await assert.rejects(() => client.keepalive(), (error) => error.code === 'UPSTREAM' && error.retryable);
+});
 test('keepalive calls the dynamic seedbox API and classifies its answers', async () => {
   const answer = (status, body) => new MamClient(config(), async (url) => { assert.match(url, /^https:\/\/t\.myanonamouse\.net\/json\/dynamicSeedbox\.php$/); return new Response(JSON.stringify(body), { status }); }).keepalive();
   assert.deepEqual(await answer(200, { Success: true, msg: 'Completed', ip: '203.0.113.5', ASN: 812 }), { ok: true, changed: true, message: 'Completed', ip: '203.0.113.5', asn: 812 });
