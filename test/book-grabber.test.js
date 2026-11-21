@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { loadConfig, validateBind } from '../src/config.js';
 import { AppError } from '../src/errors.js';
-import { mamCookie, parseSearch, MamClient } from '../src/mam.js';
+import { mamCookie, parseSearch, parseSize, MamClient } from '../src/mam.js';
 import { QbitClient } from '../src/qbit.js';
 import { StateStore } from '../src/state.js';
 import { Operations } from '../src/operations.js';
@@ -19,6 +19,50 @@ const config = (extra = {}) => loadConfig({ MAM_ID: 'session-value', QBIT_URL: '
 test('MAM parser normalizes source and accepts object/string author info', () => {
   const [book] = parseSearch({ data: { x: { id: 12, title: 'A Book', author_info: '{"7":{"name":"Author"}}', size: 2048, seeders: 4, filetype: 'epub' } } });
   assert.deepEqual({ source: book.source, sourceId: book.sourceId, author: book.author, size: book.size }, { source: 'mam', sourceId: '12', author: 'Author', size: '2.0 KB' });
+});
+test('MAM search sizes keep their units', () => {
+  assert.equal(parseSize('837.0 KiB'), 857088); assert.equal(parseSize('1,018.9 KiB'), 1043354); assert.equal(parseSize('11.6 GiB'), 12455405158); assert.equal(parseSize(2048), 2048); assert.equal(parseSize('n/a'), 0);
+  const [book] = parseSearch({ data: [{ id: 5, title: 'B', size: '1.4 MiB' }] }); assert.deepEqual({ size: book.size, sizeRaw: book.sizeRaw }, { size: '1.4 MB', sizeRaw: 1468006 });
+});
+const rotating = (value) => ({ 'Content-Type': 'application/json', 'Set-Cookie': `mam_id=${value}; expires=Wed, 01 Jan 2031 00:00:00 GMT; path=/; domain=.myanonamouse.net; secure; HttpOnly` });
+test('a rotated mam_id is saved privately and used until MAM_ID changes', async () => {
+  const cfg = config(); const sent = []; let reply = 'rotated-1';
+  const client = new MamClient(cfg, async (_url, init) => { sent.push(init.headers.Cookie); return new Response(JSON.stringify({ data: [] }), { headers: rotating(reply) }); });
+  await client.search('a'); await client.search('b'); reply = 'rotated-1'; await client.search('c');
+  assert.deepEqual(sent, ['mam_id=session-value', 'mam_id=rotated-1', 'mam_id=rotated-1']);
+  const stat = await fs.stat(path.join(cfg.dataDir, 'mam-session.json')); assert.equal(stat.mode & 0o777, 0o600);
+  assert.doesNotMatch(await fs.readFile(path.join(cfg.dataDir, 'mam-session.json'), 'utf8'), /session-value/);
+  const fresh = []; const repasted = new MamClient({ ...cfg, mamId: 'pasted-new' }, async (_url, init) => { fresh.push(init.headers.Cookie); return new Response(JSON.stringify({ data: [] })); });
+  await repasted.search('d'); assert.deepEqual(fresh, ['mam_id=pasted-new']);
+});
+test('a rejected saved cookie falls back to MAM_ID once and is dropped', async () => {
+  const cfg = config(); await fs.mkdir(cfg.dataDir, { recursive: true });
+  const seed = (await import('node:crypto')).createHash('sha256').update('session-value').digest('hex').slice(0, 16);
+  await fs.writeFile(path.join(cfg.dataDir, 'mam-session.json'), JSON.stringify({ seed, mamId: 'poisoned' }));
+  const sent = []; const client = new MamClient(cfg, async (_url, init) => { sent.push(init.headers.Cookie); return init.headers.Cookie === 'mam_id=poisoned' ? new Response(JSON.stringify({ Success: false, msg: 'Invalid session' }), { status: 403, headers: rotating('worse') }) : new Response(JSON.stringify({ Success: true, msg: 'No change' })); });
+  assert.equal((await client.keepalive()).ok, true); assert.deepEqual(sent, ['mam_id=poisoned', 'mam_id=session-value']);
+  await assert.rejects(() => fs.stat(path.join(cfg.dataDir, 'mam-session.json')), (error) => error.code === 'ENOENT');
+});
+test('cookies from failed responses and deletion markers are not saved', async () => {
+  const cfg = config(); const client = new MamClient(cfg, async () => new Response('{}', { status: 500, headers: rotating('from-error') }));
+  await assert.rejects(() => client.search('x')); const ok = new MamClient(cfg, async () => new Response(JSON.stringify({ data: [] }), { headers: rotating('deleted') })); await ok.search('y');
+  await assert.rejects(() => fs.stat(path.join(cfg.dataDir, 'mam-session.json')), (error) => error.code === 'ENOENT');
+});
+test('a transient server error mentioning sessions is not reported as a dead session', async () => {
+  const client = new MamClient(config(), async () => new Response(JSON.stringify({ Success: false, msg: 'session store temporarily unavailable' }), { status: 503 }));
+  await assert.rejects(() => client.keepalive(), (error) => error.code === 'UPSTREAM' && error.retryable);
+});
+test('keepalive calls the dynamic seedbox API and classifies its answers', async () => {
+  const answer = (status, body) => new MamClient(config(), async (url) => { assert.match(url, /^https:\/\/t\.myanonamouse\.net\/json\/dynamicSeedbox\.php$/); return new Response(JSON.stringify(body), { status }); }).keepalive();
+  assert.deepEqual(await answer(200, { Success: true, msg: 'Completed', ip: '203.0.113.5', ASN: 812 }), { ok: true, changed: true, message: 'Completed', ip: '203.0.113.5', asn: 812 });
+  assert.equal((await answer(200, { Success: true, msg: 'No change' })).changed, false);
+  assert.equal((await answer(429, { Success: false, msg: 'Last change too recent' })).rateLimited, true);
+  await assert.rejects(() => answer(403, { Success: false, msg: 'Invalid session' }), (error) => error.code === 'AUTH');
+  await assert.rejects(() => answer(503, {}), (error) => error.code === 'UPSTREAM' && error.retryable);
+});
+test('a VIP-only or otherwise refused torrent reports MAM\'s reason', async () => {
+  const client = new MamClient(config(), async () => new Response('<html><style>body{}</style><body>Download blocked: VIP torrent and you are not VIP or higher.</body></html>', { status: 406 }));
+  await assert.rejects(() => client.torrent('166000'), (error) => error.code === 'UPSTREAM' && /VIP torrent/.test(error.message));
 });
 test('MAM cookie is exactly mam_id and search sends it alone', async () => {
   const calls = []; const cfg = config(); const client = new MamClient(cfg, async (_url, init) => { calls.push(init); return new Response(JSON.stringify({ data: [] }), { headers: { 'Content-Type': 'application/json' } }); });
@@ -73,6 +117,7 @@ test('detailed operations health uses legacy-compatible keys', async () => {
 });
 test('CLI emits one envelope and maps argument errors', async () => {
   const lines = []; const fake = { health: async () => ({ good: true }) }; const code = await runCli(['health', '--json'], { operations: fake, out: (x) => lines.push(x), err: () => {} }); assert.equal(code, 0); assert.deepEqual(JSON.parse(lines[0]), { schemaVersion: '1', ok: true, command: 'health', data: { good: true } });
+  const kept = []; assert.equal(await runCli(['keepalive', '--json'], { operations: { keepalive: async () => ({ ok: true, changed: false }) }, out: (x) => kept.push(x), err: () => {} }), 0); assert.equal(JSON.parse(kept[0]).command, 'keepalive');
   const bad = []; const badCode = await runCli(['search', '--json'], { operations: fake, out: (x) => bad.push(x), err: () => {} }); assert.equal(badCode, 2); assert.equal(JSON.parse(bad[0]).error.code, 'ARGS');
   const configFail = []; const configCode = await runCli(['health', '--json'], { operations: { health: async () => { throw new AppError('CONFIG', 'missing'); } }, out: (x) => configFail.push(x), err: () => {} }); assert.equal(configCode, 3); assert.equal(configFail.length, 1); assert.equal(JSON.parse(configFail[0]).ok, false);
   const helpLines = []; assert.equal(await runCli(['--help'], { operations: fake, out: (line) => helpLines.push(line), err: () => {} }), 0); assert.match(helpLines[0], /Usage:/);

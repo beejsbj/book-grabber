@@ -31,7 +31,7 @@ shell, or environment manager. Never commit populated values.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `MAM_ID` | For search and grab | MAM session ID, sent only as the `mam_id` cookie |
+| `MAM_ID` | For search, grab and keepalive | MAM session ID, sent only as the `mam_id` cookie |
 | `QBIT_URL` | For health and grab | Explicit HTTP(S) qBittorrent Web API URL without embedded credentials |
 | `QBIT_USERNAME` | When qBittorrent requires login | qBittorrent Web API username |
 | `QBIT_PASSWORD` | When qBittorrent requires login | qBittorrent Web API password |
@@ -72,3 +72,17 @@ accepted qBittorrent handoffs, not completed downloads.
 To roll back, repeat the procedure with the prior tag. Review release notes for
 state-format changes before upgrading. See the [CLI error reference](cli.md) for
 exit-code meanings when a post-upgrade check fails.
+
+## MAM session
+
+MAM can hand back a replacement `mam_id` cookie on any response. book-grabber
+saves the latest one to `mam-session.json` in `DATA_DIR` (mode `0600`) and uses
+it in place of `MAM_ID`. Setting a different `MAM_ID` overrides it at once, so pasting a
+fresh session needs no cleanup.
+
+Run `book-grabber keepalive --json` about hourly from a timer. It uses MAM's
+documented dynamic seedbox API, so a home IP change is registered before the
+tracker starts rejecting announces as "Unrecognized host", and the session
+never sits idle. Alert on a non-zero exit: code `4` (`AUTH`) means the session
+needs replacing; code `5` (`UPSTREAM`) is usually transient.
+

@@ -10,6 +10,7 @@ command requires `--json` and writes exactly one JSON object to stdout.
 | `book-grabber health --json` | Check configuration and qBittorrent reachability. |
 | `book-grabber search "<query>" [--page N] --json` | Search MAM. `N` must be a non-negative integer. |
 | `book-grabber grab <source-id> --json` | Fetch the selected torrent, submit it to qBittorrent, and record the accepted handoff. |
+| `book-grabber keepalive --json` | Call MAM's dynamic seedbox API: keeps the session in use and registers this host's current IP. Safe to run hourly. |
 | `book-grabber history --json` | Read local handoff history. |
 | `book-grabber queue list --json` | Read the wanted-books queue. |
 | `book-grabber queue add "<text>" --json` | Add an entry to the wanted-books queue. |
@@ -23,7 +24,10 @@ command requires `--json` and writes exactly one JSON object to stdout.
 | `book-grabber --version` | Print the package version. |
 
 `health`, `search`, `history`, and every `list` command are read-only. `grab`,
-`add`, and `remove` change external or local state. A search result is not
+`add`, and `remove` change external or local state. `keepalive` changes only
+the session's registered IP at MAM, and only when it has moved; it needs a
+session created with "Allow Session to set Dynamic Seedbox". An `AUTH` error
+from it means the session is dead and a new `MAM_ID` is needed. A search result is not
 authorization to grab it; require an explicit choice of the exact `sourceId`.
 Search does contact MAM using the configured session, but creates no handoff and
 changes no local state.
