@@ -12,6 +12,7 @@ export class Operations {
     this.state = new StateStore(config.dataDir);
   }
   async health() { requireQbit(this.config); const qbit = await this.qbit.health(); return { ok: true, mamConfigured: Boolean(this.config.mamId), qbitUrl: this.config.qbitUrl, qbitReachable: qbit.reachable, dataDir: this.config.dataDir }; }
+  keepalive() { return this.mam.keepalive(); }
   async search(query, page = 0) { const found = await this.mam.search(query, page); return { query, page, total: found.results.length, results: found.results }; }
   async grab(sourceId, metadata = {}) {
     requireQbit(this.config);

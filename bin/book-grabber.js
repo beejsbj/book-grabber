@@ -13,6 +13,7 @@ Usage:
   book-grabber health --json
   book-grabber search <query> [--page N] --json
   book-grabber grab <source-id> --json
+  book-grabber keepalive --json
   book-grabber history --json
   book-grabber queue list|add --json
   book-grabber not-found list|add|remove --json
@@ -41,6 +42,7 @@ export async function runCli(argv = process.argv.slice(2), { config = loadConfig
     if (command === 'health') data = await operations.health();
     else if (command === 'search') { if (!argv[1] || argv[1].startsWith('--')) throw new AppError('ARGS', 'Search query is required'); const page = Number(argument(argv, '--page') || 0); if (!Number.isInteger(page) || page < 0) throw new AppError('ARGS', 'Page must be a non-negative integer'); data = await operations.search(argv[1], page); }
     else if (command === 'grab') { if (!argv[1] || argv[1].startsWith('--')) throw new AppError('ARGS', 'Source ID is required'); data = await operations.grab(argv[1]); }
+    else if (command === 'keepalive') data = await operations.keepalive();
     else if (command === 'history') data = await operations.history();
     else if (['queue', 'not-found', 'failed'].includes(command)) { const action = argv[1]; const kind = command === 'not-found' ? 'notFound' : command; if (action === 'list') data = await operations.list(kind); else if (action === 'add' && kind !== 'failed') data = await operations.add(kind, argv.slice(2).filter((x) => x !== '--json').join(' ')); else if (action === 'remove' && kind !== 'queue') data = await operations.remove(kind, argv.slice(2).filter((x) => x !== '--json').join(' ')); else throw new AppError('ARGS', 'Unsupported list operation'); }
     else throw new AppError('ARGS', 'Unknown command');
